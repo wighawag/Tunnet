@@ -26,3 +26,18 @@ Second, quieter behaviour change in the same release: `recover_stale()` no longe
 Impact on us: do not bump the osdns pin on release day. The machines carrying leftover records are the machines that hit the original bug, which is to say our affected users. Upgrading blindly converts a DNS-integration failure into a total lockout of the manager including `apply()`, which is strictly worse than the current state.
 
 Refs: orielhaim/osdns#2, tunnetio/Tunnet#21 (carries the downstream `NoSuchLink` shim and the revised upgrade gate).
+
+## Update, 2026-09-07 (re-verified against `95efca6`, version 0.2.0)
+
+The maintainer added `7f821ac fix: reject unsupported journal schema versions explicitly`. `records()` now parses a `JournalEnvelope` first and returns a typed `Error::UnsupportedJournalVersion { path, found, supported }` before attempting the full record, so the diagnostic is reachable and names the file:
+
+```
+unsupported journal schema version 1 in <path> (supported: 3);
+clear or reset old osdns state before upgrading
+```
+
+The lockout itself is unchanged. Re-running the reproduction against `95efca6`, `recover_stale()`, `abandon_journal()` and `apply()` all still fail. `records()` still returns `Err` from inside its loop, so one legacy file still blocks every unrelated healthy record, and `abandon_journal` still cannot serve as the escape hatch.
+
+Read charitably, this is now a deliberate upgrade contract rather than an oversight: the version moved to 0.2.0 rather than 0.1.4, so the upgrade is explicit rather than automatic, and the error tells the operator to clear old state. That is defensible. It does mean the migration burden moved to every downstream, and ours is not written yet.
+
+Because the error carries `path`, a downstream can now recover programmatically by deleting the file it names. That is the shape our migration should take, rather than blindly wiping the journal directory.
