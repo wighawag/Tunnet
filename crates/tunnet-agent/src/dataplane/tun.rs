@@ -267,11 +267,17 @@ where
 }
 
 /// Linux `recv_multiple` slot: `AsRef`/`AsMut` always expose full capacity.
+// Staged for the Linux `recv_multiple` batching path, which is not wired up
+// yet: the tests below exercise it, nothing in the library calls it. Scoped to
+// the non-test build so the exemption disappears the moment it is used for
+// real, and `expect` rather than `allow` so it fails then instead of lingering.
+#[cfg_attr(not(test), expect(dead_code))]
 #[cfg(any(test, target_os = "linux"))]
 pub struct RecvSlot {
     buf: Vec<u8>,
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
 #[cfg(any(test, target_os = "linux"))]
 impl RecvSlot {
     pub fn with_capacity(cap: usize) -> Self {
@@ -359,6 +365,11 @@ async fn write_one(
     }
 }
 
+// Staged for the Linux `recv_multiple` batching path, which is not wired up
+// yet: the tests below exercise it, nothing in the library calls it. Scoped to
+// the non-test build so the exemption disappears the moment it is used for
+// real, and `expect` rather than `allow` so it fails then instead of lingering.
+#[cfg_attr(not(test), expect(dead_code))]
 #[cfg(any(test, target_os = "linux"))]
 pub fn stage_virtio(pkt: &[u8]) -> Vec<u8> {
     #[cfg(target_os = "linux")]

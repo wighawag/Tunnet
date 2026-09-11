@@ -314,6 +314,16 @@ impl DataPlaneActor {
             )
             .map_err(|e| DataPlaneError::Tun(format!("{e:#}")))?,
         );
+        // `tun-rs` only implements `if_index` for linux/macOS/the BSDs; the
+        // impl block excludes Android, so calling it there does not compile.
+        // Nothing needs it on Android either: the index exists to address the
+        // interface during native route reconciliation, which `VpnService`
+        // owns, so `RouteEngine::reconcile` returns before using it.
+        #[cfg(target_os = "android")]
+        {
+            self.tun_if_index = None;
+        }
+        #[cfg(not(target_os = "android"))]
         match tun.if_index() {
             Ok(index) if index != 0 => {
                 tracing::info!(index, ifname = %self.cfg.ifname, "TUN interface index");
