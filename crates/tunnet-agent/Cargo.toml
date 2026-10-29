@@ -97,7 +97,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [features]
-default = ["daemon"]
+default = ["daemon", "host-dns"]
 ssh = ["dep:russh", "dep:russh-sftp", "dep:rusqlite"]
 updater = ["dep:tunnet-update", "dep:semver", "dep:zip"]
 metrics-serve = ["dep:metrics-exporter-prometheus"]
@@ -116,7 +116,6 @@ daemon = [
   "ssh",
   "updater",
   "metrics-serve",
-  "host-dns",
   "posture",
   "policy",
   "local-api",
