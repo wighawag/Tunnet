@@ -8,6 +8,9 @@ import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 
+// apps/android (Compose app) also compiles src/main/java/io/tunnet/android, res,
+// the manifest and tests from here in place: keep them free of Expo imports
+// other than this module's R class.
 plugins {
   id 'com.android.library'
   id 'expo-module-gradle-plugin'

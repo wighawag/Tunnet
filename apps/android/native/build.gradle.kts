@@ -62,7 +62,7 @@ android {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:4.36.1"
+        artifact = "com.google.protobuf:protoc:4.36.2"
     }
     generateProtoTasks {
         all().forEach { task ->
@@ -76,9 +76,9 @@ protobuf {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.19.0")
+    implementation("androidx.core:core-ktx:1.19.1")
     api("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
-    api("com.google.protobuf:protobuf-javalite:4.36.1")
+    api("com.google.protobuf:protobuf-javalite:4.36.2")
     testImplementation("junit:junit:4.13.2")
 }
 
@@ -103,6 +103,7 @@ val rustInputs = files(
             "Cargo.toml",
             "Cargo.lock",
             "rust-toolchain.toml",
+            ".cargo/**",
             "crates/**/*.rs",
             "crates/**/Cargo.toml",
             "proto/**/*.proto",

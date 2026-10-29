@@ -2,9 +2,11 @@ package io.tunnet.android
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -35,25 +37,35 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import io.tunnet.android.wire.Lifecycle
 import io.tunnet.android.wire.Peer
 import io.tunnet.android.wire.Snapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
-    private val snapshots = TunnetVpnService.snapshotBytes.map { bytes ->
-        bytes?.let(Snapshot::parseFrom) ?: Snapshot.getDefaultInstance()
+    private val snapshots by lazy {
+        TunnetVpnService.snapshotBytes
+            .map(::parseSnapshot)
+            .stateIn(
+                lifecycleScope,
+                SharingStarted.WhileSubscribed(5_000),
+                parseSnapshot(TunnetVpnService.snapshotBytes.value),
+            )
     }
 
     private val vpnConsentDenied = MutableStateFlow<String?>(null)
@@ -90,13 +102,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestNotificationPermissionIfNeeded()
+        if (savedInstanceState == null) {
+            requestNotificationPermissionIfNeeded()
+        } else {
+            // A consent or permission dialog may still answer for this connect.
+            pendingConnectInvite = savedInstanceState.getString(STATE_PENDING_INVITE)
+            vpnConsentInProgress.value = savedInstanceState.getBoolean(STATE_CONSENT_IN_PROGRESS)
+        }
         refreshLanState()
-        handleLaunchInvite(intent)
 
         setContent {
             MaterialTheme {
-                val snapshot by snapshots.collectAsStateWithLifecycle(Snapshot.getDefaultInstance())
+                val snapshot by snapshots.collectAsStateWithLifecycle()
                 val denied by vpnConsentDenied.collectAsStateWithLifecycle()
                 val askingVpn by vpnConsentInProgress.collectAsStateWithLifecycle()
                 val noLan by lanDenied.collectAsStateWithLifecycle()
@@ -108,18 +125,16 @@ class MainActivity : ComponentActivity() {
                     onConnect = { connect(invite = null) },
                     onDisconnect = ::disconnect,
                     onJoin = { connect(invite = it) },
-                    onOpenVpnSettings = {
-                        startActivity(Intent(android.provider.Settings.ACTION_VPN_SETTINGS))
-                    },
+                    onOpenVpnSettings = ::openVpnSettings,
                 )
             }
         }
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleLaunchInvite(intent)
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_PENDING_INVITE, pendingConnectInvite)
+        outState.putBoolean(STATE_CONSENT_IN_PROGRESS, vpnConsentInProgress.value)
     }
 
     override fun onResume() {
@@ -128,20 +143,15 @@ class MainActivity : ComponentActivity() {
         TunnetVpnService.pushLanAvailability()
     }
 
-    private fun handleLaunchInvite(intent: Intent?) {
-        val invite = intent?.getStringExtra(TunnetVpnService.EXTRA_INVITE)?.trim().orEmpty()
-        if (invite.isEmpty()) return
-        intent?.removeExtra(TunnetVpnService.EXTRA_INVITE)
-        connect(invite)
-    }
-
     private fun refreshLanState() {
         lanDenied.value = LocalNetworkAccess.state(this) == LocalNetworkAccess.State.Denied
     }
 
     private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val permission = android.Manifest.permission.POST_NOTIFICATIONS
+        if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+            notificationPermission.launch(permission)
         }
     }
 
@@ -167,6 +177,9 @@ class MainActivity : ComponentActivity() {
 
     private fun startVpnService(invite: String?) {
         pendingConnectInvite = null
+        // A running agent takes the join directly; the connect intent would
+        // also reset the notification to "Starting…".
+        if (!invite.isNullOrBlank() && TunnetVpnService.requestJoin(invite)) return
         val intent = Intent(this, TunnetVpnService::class.java)
             .setAction(TunnetVpnService.ACTION_CONNECT)
         if (!invite.isNullOrBlank()) {
@@ -175,12 +188,25 @@ class MainActivity : ComponentActivity() {
         startForegroundService(intent)
     }
 
+    private fun openVpnSettings() {
+        runCatching { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) }
+            .recoverCatching { startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }
+    }
+
     private fun disconnect() {
         startService(
             Intent(this, TunnetVpnService::class.java).setAction(TunnetVpnService.ACTION_DISCONNECT),
         )
     }
+
+    private companion object {
+        const val STATE_PENDING_INVITE = "pending_connect_invite"
+        const val STATE_CONSENT_IN_PROGRESS = "vpn_consent_in_progress"
+    }
 }
+
+private fun parseSnapshot(bytes: ByteArray?): Snapshot =
+    bytes?.let(Snapshot::parseFrom) ?: Snapshot.getDefaultInstance()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -237,7 +263,7 @@ private fun TunnetScreen(
                     item { Text("No peers yet.", style = MaterialTheme.typography.bodyMedium) }
                 } else {
                     item { Text("Peers", style = MaterialTheme.typography.titleMedium) }
-                    items(snapshot.peersList, key = { it.endpointId.ifEmpty { it.ip } }) { peer ->
+                    items(snapshot.peersList, key = { "${it.networkId}/${it.endpointId.ifEmpty { it.ip }}" }) { peer ->
                         PeerCard(peer, snapshot.endpointId)
                     }
                 }
@@ -293,15 +319,17 @@ private fun ConnectionControls(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
-    val stopped = snapshot.lifecycle == Lifecycle.LIFECYCLE_STOPPED ||
-        snapshot.lifecycle == Lifecycle.LIFECYCLE_UNSPECIFIED
-    val busy = snapshot.busy() || vpnConsentInProgress
-    if (stopped) {
-        Button(onClick = onConnect, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+    if (snapshot.hostStopped(TunnetVpnService.isRunning())) {
+        Button(onClick = onConnect, enabled = !vpnConsentInProgress, modifier = Modifier.fillMaxWidth()) {
             Text("Connect")
         }
     } else {
-        Button(onClick = onDisconnect, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+        // Stays enabled while joining or awaiting approval: Disconnect cancels a pending join.
+        Button(
+            onClick = onDisconnect,
+            enabled = !vpnConsentInProgress && snapshot.lifecycle != Lifecycle.LIFECYCLE_STOPPING,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text("Disconnect")
         }
     }
@@ -313,10 +341,9 @@ private fun JoinCard(
     vpnConsentInProgress: Boolean,
     onJoin: (String) -> Unit,
 ) {
-    var invite by remember { mutableStateOf("") }
+    var invite by rememberSaveable { mutableStateOf("") }
     val context = LocalContext.current
-    val stopped = snapshot.lifecycle == Lifecycle.LIFECYCLE_STOPPED ||
-        snapshot.lifecycle == Lifecycle.LIFECYCLE_UNSPECIFIED
+    val stopped = snapshot.hostStopped(TunnetVpnService.isRunning())
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Join a network", style = MaterialTheme.typography.titleMedium)

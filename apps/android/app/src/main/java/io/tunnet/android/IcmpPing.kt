@@ -1,8 +1,5 @@
 package io.tunnet.android
 
-import java.io.File
-import java.util.concurrent.TimeUnit
-
 /**
  * ICMP echo to a mesh IPv4 via the platform `ping` binary.
  * This is ordinary host networking, not Tunnet's QUIC stream ping.
@@ -21,8 +18,7 @@ object IcmpPing {
         return match.groupValues.drop(1).all { it.toInt() in 0..255 }
     }
 
-    fun parseOutput(stdout: String, stderr: String, exitCode: Int): Result {
-        val text = "$stdout\n$stderr"
+    fun parseOutput(text: String, exitCode: Int): Result {
         val ms = timeMs.find(text)?.groupValues?.get(1)?.toDoubleOrNull()
         if (ms != null && (exitCode == 0 || text.contains("bytes from", ignoreCase = true))) {
             return Result.Reply(ms)
@@ -38,21 +34,15 @@ object IcmpPing {
         if (!isIpv4(ip)) {
             return Result.Failure("not an IPv4 address")
         }
-        val binary = listOf("/system/bin/ping", "ping").firstOrNull { File(it).canExecute() }
-            ?: "ping"
         val process = try {
-            ProcessBuilder(binary, "-c", "1", "-W", "3", ip)
+            // `-W 3 -c 1` bounds the run, so reading to EOF is the timeout.
+            ProcessBuilder("/system/bin/ping", "-c", "1", "-W", "3", ip)
                 .redirectErrorStream(true)
                 .start()
         } catch (e: Exception) {
             return Result.Failure(e.message ?: "could not start ping")
         }
         val output = process.inputStream.bufferedReader().use { it.readText() }
-        val finished = process.waitFor(8, TimeUnit.SECONDS)
-        if (!finished) {
-            process.destroyForcibly()
-            return Result.Failure("ping timed out")
-        }
-        return parseOutput(output, "", process.exitValue())
+        return parseOutput(output, process.waitFor())
     }
 }

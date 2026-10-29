@@ -7,11 +7,18 @@ import io.tunnet.android.wire.Snapshot
 
 fun Snapshot.isJoined(): Boolean = networksCount > 0
 
-fun Snapshot.agentAttached(): Boolean = when (lifecycle) {
+/**
+ * Whether the UI should offer to start the service rather than stop it.
+ *
+ * A failed start publishes FAILED and then stops the service, so FAILED only
+ * means "running" while the service is still up.
+ */
+fun Snapshot.hostStopped(serviceRunning: Boolean): Boolean = when (lifecycle) {
     Lifecycle.LIFECYCLE_UNSPECIFIED,
     Lifecycle.LIFECYCLE_STOPPED,
-    -> false
-    else -> true
+    -> true
+    Lifecycle.LIFECYCLE_FAILED -> !serviceRunning
+    else -> false
 }
 
 fun Snapshot.dataPlaneUp(): Boolean = dataPlane == DataPlane.DATA_PLANE_UP

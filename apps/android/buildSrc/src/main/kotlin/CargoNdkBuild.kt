@@ -1,4 +1,5 @@
 import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.ListProperty
@@ -9,6 +10,7 @@ import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
+import java.io.ByteArrayOutputStream
 import java.io.File
 import javax.inject.Inject
 
@@ -34,14 +36,35 @@ abstract class CargoNdkBuild @Inject constructor(
     fun run() {
         val ndk = File(ndkHome.get())
         val version = ndkVersion.get()
-        if (!ndk.isDirectory) {
-            throw org.gradle.api.GradleException(
-                "NDK $version not found at ${ndk.path}. Install it with " +
-                    "sdkmanager \"ndk;$version\" and do not point ANDROID_NDK_HOME at another revision.",
+        val revision = File(ndk, "source.properties").takeIf { it.isFile }
+            ?.readLines()
+            ?.firstOrNull { it.startsWith("Pkg.Revision") }
+            ?.substringAfter("=")
+            ?.trim()
+        if (revision != version) {
+            throw GradleException(
+                "NDK $version is required at ${ndk.path}. Install it with sdkmanager \"ndk;$version\".",
             )
         }
-        val cargo = resolveOnPath("cargo")
-            ?: throw org.gradle.api.GradleException("cargo is not on PATH")
+        val cargo = System.getenv("CARGO")?.let(::File)?.takeIf { it.canExecute() }
+            ?: resolveOnPath("cargo")
+            ?: throw GradleException("cargo not found: set CARGO or put it on PATH")
+
+        val probe = ByteArrayOutputStream()
+        val probeResult = exec.exec {
+            workingDir = repoRoot.get().asFile
+            commandLine(cargo.absolutePath, "ndk", "--version")
+            standardOutput = probe
+            isIgnoreExitValue = true
+        }
+        val installed = probe.toString().trim().removePrefix("cargo-ndk").trim()
+        if (probeResult.exitValue != 0 || installed != cargoNdkVersion.get()) {
+            throw GradleException(
+                "cargo-ndk ${cargoNdkVersion.get()} is required (found: ${installed.ifEmpty { "none" }}). " +
+                    "Install it with `cargo install cargo-ndk --version ${cargoNdkVersion.get()} --locked`.",
+            )
+        }
+
         val dest = outDir.get().asFile
         dest.deleteRecursively()
         dest.mkdirs()
@@ -68,27 +91,15 @@ abstract class CargoNdkBuild @Inject constructor(
             commandLine(args)
             isIgnoreExitValue = true
         }
-        if (result.exitValue == 0) {
-            // cargo-ndk also copies stale `.so` files left in the target dir by
-            // other builds; only the agent belongs in the APK.
-            val agent = "lib${crate.get().replace('-', '_')}.so"
-            dest.walkTopDown()
-                .filter { it.isFile && it.name != agent }
-                .forEach { it.delete() }
-            return
+        if (result.exitValue != 0) {
+            throw GradleException("cargo ndk failed with exit ${result.exitValue}")
         }
-        val probe = exec.exec {
-            workingDir = repoRoot.get().asFile
-            commandLine(cargo.absolutePath, "ndk", "--version")
-            isIgnoreExitValue = true
-        }
-        if (probe.exitValue != 0) {
-            throw org.gradle.api.GradleException(
-                "cargo-ndk is required to build the Android agent. Install " +
-                    "`cargo install cargo-ndk --version ${cargoNdkVersion.get()} --locked`.",
-            )
-        }
-        throw org.gradle.api.GradleException("cargo ndk failed with exit ${result.exitValue}")
+        // cargo-ndk also copies stale `.so` files left in the target dir by
+        // other builds; only the agent belongs in the APK.
+        val agent = "lib${crate.get().replace('-', '_')}.so"
+        dest.walkTopDown()
+            .filter { it.isFile && it.name != agent }
+            .forEach { it.delete() }
     }
 }
 

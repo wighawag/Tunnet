@@ -66,20 +66,14 @@ class SnapshotUiTest {
     }
 
     @Test
-    fun failedIdleAgentIsAttachedSoHostCanDisconnect() {
-        val idle = Snapshot.newBuilder()
-            .setLifecycle(Lifecycle.LIFECYCLE_IDLE)
-            .setHostname("phone")
-            .build()
-        assertTrue(idle.agentAttached())
-        val failed = Snapshot.newBuilder()
-            .setLifecycle(Lifecycle.LIFECYCLE_FAILED)
-            .build()
-        assertTrue(failed.agentAttached())
-        val stopped = Snapshot.newBuilder()
-            .setLifecycle(Lifecycle.LIFECYCLE_STOPPED)
-            .build()
-        assertFalse(stopped.agentAttached())
+    fun failedAgentIsStoppedOnlyOnceTheServiceIsGone() {
+        val failed = Snapshot.newBuilder().setLifecycle(Lifecycle.LIFECYCLE_FAILED).build()
+        assertFalse(failed.hostStopped(serviceRunning = true))
+        assertTrue(failed.hostStopped(serviceRunning = false))
+        val stopped = Snapshot.newBuilder().setLifecycle(Lifecycle.LIFECYCLE_STOPPED).build()
+        assertTrue(stopped.hostStopped(serviceRunning = true))
+        val pending = Snapshot.newBuilder().setLifecycle(Lifecycle.LIFECYCLE_PENDING_APPROVAL).build()
+        assertFalse(pending.hostStopped(serviceRunning = true))
     }
 
     @Test
