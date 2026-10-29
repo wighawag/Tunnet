@@ -70,7 +70,10 @@ class MainActivity : ComponentActivity() {
             startVpnService(pendingConnectInvite)
         } else {
             pendingConnectInvite = null
-            vpnConsentDenied.value = "VPN permission is required to connect"
+            // Android cancels the consent dialog without showing it while another
+            // app is the always-on VPN, so "denied" usually means that.
+            vpnConsentDenied.value = "Android did not grant VPN permission. If another VPN " +
+                "(e.g. Tailscale) is set to Always-on, turn that off in VPN settings, then Connect again."
         }
     }
 
@@ -105,6 +108,9 @@ class MainActivity : ComponentActivity() {
                     onConnect = { connect(invite = null) },
                     onDisconnect = ::disconnect,
                     onJoin = { connect(invite = it) },
+                    onOpenVpnSettings = {
+                        startActivity(Intent(android.provider.Settings.ACTION_VPN_SETTINGS))
+                    },
                 )
             }
         }
@@ -186,6 +192,7 @@ private fun TunnetScreen(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onJoin: (String) -> Unit,
+    onOpenVpnSettings: () -> Unit,
 ) {
     Scaffold(topBar = { TopAppBar(title = { Text("Tunnet") }) }) { padding ->
         LazyColumn(
@@ -204,11 +211,14 @@ private fun TunnetScreen(
             errorText?.let { error ->
                 item {
                     Card(Modifier.fillMaxWidth()) {
-                        Text(
-                            text = error,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(16.dp),
-                        )
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(text = error, color = MaterialTheme.colorScheme.error)
+                            if (vpnConsentDenied != null) {
+                                OutlinedButton(onClick = onOpenVpnSettings, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Open VPN settings")
+                                }
+                            }
+                        }
                     }
                 }
             }
